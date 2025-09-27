@@ -14,3 +14,5 @@ def load_fashion_mnist():
     x_test = np.expand_dims(x_test, -1)
 
     return x_train, x_test
+
+
