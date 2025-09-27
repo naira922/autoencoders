@@ -1,18 +1,27 @@
+import os
 import numpy as np
-from tensorflow.keras.datasets import fashion_mnist
+import pandas as pd
+import kagglehub
 
 def load_fashion_mnist():
-    # Load dataset
-    (x_train, _), (x_test, _) = fashion_mnist.load_data()
+    # Download dataset
+    path = kagglehub.dataset_download("zalando-research/fashionmnist")
+    print("Path to dataset files:", path)
 
-    # Normalize to [0,1] and reshape for CNN input
-    x_train = x_train.astype("float32") / 255.0
-    x_test = x_test.astype("float32") / 255.0
+    train_csv = os.path.join(path, "fashion-mnist_train.csv")
+    test_csv = os.path.join(path, "fashion-mnist_test.csv")
 
-    # Add channel dimension (needed for Conv layers)
-    x_train = np.expand_dims(x_train, -1)
-    x_test = np.expand_dims(x_test, -1)
+    train_df = pd.read_csv(train_csv)
+    test_df = pd.read_csv(test_csv)
 
+    # Normalize and reshape
+    x_train = train_df.iloc[:, 1:].values.astype("float32") / 255.0
+    x_test = test_df.iloc[:, 1:].values.astype("float32") / 255.0
+
+    x_train = x_train.reshape(-1, 28, 28, 1)
+    x_test = x_test.reshape(-1, 28, 28, 1)
+
+    print("Train:", x_train.shape, " Test:", x_test.shape)
     return x_train, x_test
 
 
