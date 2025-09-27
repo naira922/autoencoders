@@ -23,3 +23,5 @@ def load_fashion_mnist():
 
     print("Train:", x_train.shape, " Test:", x_test.shape)
     return x_train, x_test
+
+

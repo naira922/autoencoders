@@ -1,0 +1,122 @@
+LATENT_DIM = 16
+INPUT_SHAPE = (28, 28, 1)
+
+def build_encoder(latent_dim):
+    inputs = layers.Input(shape=INPUT_SHAPE)
+    x = layers.Conv2D(32, 3, strides=2, padding="same")(inputs)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU()(x)
+
+    x = layers.Conv2D(64, 3, strides=2, padding="same")(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU()(x)
+
+    x = layers.Conv2D(128, 3, strides=2, padding="same")(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU()(x)
+
+    x = layers.Flatten()(x)
+    x = layers.Dense(256, activation="relu")(x)
+    z_mean = layers.Dense(latent_dim, name="z_mean")(x)
+    z_log_var = layers.Dense(latent_dim, name="z_log_var")(x)
+    z = Sampling()([z_mean, z_log_var])
+    return models.Model(inputs, [z_mean, z_log_var, z], name="encoder")
+
+# -----------------------------
+# Decoder
+# -----------------------------
+def build_decoder(latent_dim):
+    latent_inputs = layers.Input(shape=(latent_dim,))
+    x = layers.Dense(4*4*128, activation="relu")(latent_inputs)
+    x = layers.Reshape((4,4,128))(x)
+
+    # Use Conv2DTranspose with strides to control output shape
+    x = layers.Conv2DTranspose(128, 3, strides=2, padding="same")(x) # 8x8
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU()(x)
+
+    x = layers.Conv2DTranspose(64, 3, strides=2, padding="same")(x)  # 16x16
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU()(x)
+
+    # Use strides=1 here to get 28x28 output
+    x = layers.Conv2DTranspose(32, 3, strides=1, padding="same")(x) # 16x16
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU()(x)
+
+    # Add one more Conv2DTranspose layer with strides=2 to get 32x32, then crop
+    x = layers.Conv2DTranspose(16, 3, strides=2, padding="same")(x) # 32x32
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU()(x)
+
+    # Crop to 28x28
+    x = layers.Cropping2D(((2, 2), (2, 2)))(x) # 28x28
+
+    outputs = layers.Conv2D(1, 3, padding="same", activation="sigmoid")(x)
+    return models.Model(latent_inputs, outputs, name="decoder")
+
+
+# -----------------------------
+# VAE Model
+# -----------------------------
+class VAE(models.Model):
+    def _init_(self, encoder, decoder, beta=1.0, **kwargs):
+        super(VAE, self)._init_(**kwargs)
+        self.encoder = encoder
+        self.decoder = decoder
+        self.beta = beta
+        self.total_loss_tracker = tf.keras.metrics.Mean(name="loss")
+        self.reconstruction_loss_tracker = tf.keras.metrics.Mean(name="reconstruction_loss")
+        self.kl_loss_tracker = tf.keras.metrics.Mean(name="kl_loss")
+
+    @property
+    def metrics(self):
+        return [self.total_loss_tracker, self.reconstruction_loss_tracker, self.kl_loss_tracker]
+
+    def call(self, inputs):
+        z_mean, z_log_var, z = self.encoder(inputs)
+        return self.decoder(z)
+
+    def train_step(self, data):
+        if isinstance(data, tuple):
+            data = data[0]
+
+        with tf.GradientTape() as tape:
+            z_mean, z_log_var, z = self.encoder(data)
+            reconstruction = self.decoder(z)
+            reconstruction_loss = tf.reduce_mean(
+                tf.reduce_sum(tf.square(data - reconstruction), axis=(1, 2, 3))
+            )
+            kl_loss = -0.5 * tf.reduce_mean(
+                tf.reduce_sum(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=1)
+            )
+            total_loss = reconstruction_loss + self.beta * kl_loss
+
+        grads = tape.gradient(total_loss, self.trainable_weights)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_weights))
+
+        self.total_loss_tracker.update_state(total_loss)
+        self.reconstruction_loss_tracker.update_state(reconstruction_loss)
+        self.kl_loss_tracker.update_state(kl_loss)
+
+        return {m.name: m.result() for m in self.metrics}
+
+    def test_step(self, data):
+        if isinstance(data, tuple):
+            data = data[0]
+
+        z_mean, z_log_var, z = self.encoder(data)
+        reconstruction = self.decoder(z)
+        reconstruction_loss = tf.reduce_mean(
+            tf.reduce_sum(tf.square(data - reconstruction), axis=(1, 2, 3))
+        )
+        kl_loss = -0.5 * tf.reduce_mean(
+            tf.reduce_sum(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=1)
+        )
+        total_loss = reconstruction_loss + self.beta * kl_loss
+
+        return {
+            "loss": total_loss,
+            "reconstruction_loss": reconstruction_loss,
+            "kl_loss": kl_loss,
+        }
